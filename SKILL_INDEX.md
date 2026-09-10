@@ -6,8 +6,7 @@ Registry để xác định skill phù hợp trước khi thực hiện yêu c�
 |---|---|---|---|---|---|
 | Sample Skill | `skills/_sample-skill/SKILL.md` | Template | Template | 1.0.0 | No |
 | Code Review | `skills/code-review/SKILL.md` | Software Engineering | Stable | 1.0.0 | Yes |
-| Student Task & Calendar Orchestrator | `skills/student-task-calendar-orchestrator/SKILL.md` | Productivity | Stable | 1.0.0 | Yes |
-
+| Student Task & Calendar Orchestrator | `skills/student-task-calendar-orchestrator/SKILL.md` | Productivity | Stable | 1.1.0 | Yes |
 ## Routing policy
 
 1. Đọc `manifest.yaml`.

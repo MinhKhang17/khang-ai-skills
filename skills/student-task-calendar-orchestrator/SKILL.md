@@ -1289,35 +1289,7 @@ sang thang tương ứng của provider.
 Trước mutation, normalize item thành:
 
 ```yaml
-canonical_item:
-  id: null
-  action: CREATE | UPDATE | DELETE | COMPLETE
-  entity: TASK | EVENT
-
-  title: "[Project] Action"
-
-  datetime:
-    start: null
-    end: null
-    due: null
-    timezone: "Asia/Ho_Chi_Minh"
-
-  priority: P1 | P2 | P3 | P4 | null
-
-  project: null
-  course: null
-
-  description: null
-
-  source:
-    type: teacher | friend | teammate | self | other
-    person: null
-
-  recurrence: null
-
-  confidence:
-    target_match: 0.0
-    datetime: 0.0
+canonical_item: id: null action: CREATE | UPDATE | DELETE | COMPLETE entity: TASK | EVENT title: "[Project] Action" datetime: start: null end: null due: null timezone: "Asia/Ho_Chi_Minh" reminders: use_default: false overrides: - method: popup minutes_before: 1440 - method: popup minutes_before: 60 - method: popup minutes_before: 30 sound_notification: requested: null provider_confirmed: null priority: P1 | P2 | P3 | P4 | null
 ```
 
 Không mutate nếu required field còn null.
@@ -1602,6 +1574,7 @@ Trước mỗi mutation:
 [ ] Có conflict Calendar đáng chú ý?
 [ ] Target update/delete có đủ confidence?
 [ ] Timezone đúng Asia/Ho_Chi_Minh?
+[ ] Nếu là Calendar event, đã resolve sound-notification preference? [ ] Đã áp dụng reminder 1440/60/30 phút hoặc user override? [ ] Reminder đã được verify nếu provider hỗ trợ? [ ] Không claim sound nếu provider không xác nhận?
 ```
 
 Sau mutation:
