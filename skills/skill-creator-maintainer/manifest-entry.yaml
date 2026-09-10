@@ -1,0 +1,16 @@
+skill-creator-maintainer:
+  path: skills/skill-creator-maintainer/SKILL.md
+  version: 1.0.0
+  enabled: true
+  status: stable
+  category: skill-engineering
+  priority: 200
+  intents:
+    - CREATE_SKILL
+    - UPDATE_SKILL
+    - DISABLE_SKILL
+    - DEPRECATE_SKILL
+    - DELETE_SKILL
+    - VALIDATE_SKILL
+    - VERSION_SKILL
+    - REVIEW_SKILL_STRUCTURE
