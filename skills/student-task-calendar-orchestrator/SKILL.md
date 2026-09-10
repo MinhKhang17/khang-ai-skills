@@ -1,1633 +1,677 @@
+# Student Task & Calendar Orchestrator — v1.2.0 Update Patch
+
+Target repository:
+
+`MinhKhang17/khang-ai-skills`
+
+Target file:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Current version:
+
+`1.1.0`
+
+Target version:
+
+`1.2.0`
+
+SemVer:
+
+`MINOR`
+
+Reason: thêm capability phân loại task theo ngữ nghĩa và daily-scope policy nhưng không phá contract cũ.
+
 ---
-name: student-task-calendar-orchestrator
+
+# PATCH 1 — Metadata
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+YAML frontmatter
+
+Current location:
+
+approximately lines `1–20`
+
+## Replace description with
+
+```yaml
 description: >
-  Quản lý task và lịch học/dự án cho sinh viên từ tin nhắn tự do. Phân tích tin nhắn
-  từ giảng viên, bạn bè, nhóm dự án hoặc chính người dùng; xác định hành động
-  CREATE/UPDATE/DELETE/COMPLETE/RESCHEDULE; hỏi lại khi thiếu thông tin bắt buộc;
-  sau đó đồng bộ với Google Calendar và Task Provider.
-version: 1.1.0
-language: vi
-timezone: Asia/Ho_Chi_Minh
-primary_calendar: primary
-task_provider: Todoist
-category: productivity
-tags:
-  - student
-  - task-management
-  - calendar
-  - todoist
-  - google-calendar
-  - project-management
----
+  Quản lý task và lịch học/dự án từ tin nhắn tự do; tự nhận dạng loại task theo
+  luyện tập, học tập, công việc hoặc việc đặc biệt trong ngày; phân biệt task một lần
+  với recurring task; xác định CREATE/UPDATE/DELETE/COMPLETE/RESCHEDULE; hỏi lại khi
+  thiếu thông tin bắt buộc; sau đó đồng bộ với Google Calendar và Task Provider.
+```
 
-# Student Task & Calendar Orchestrator
-
-## 1. Purpose
-
-Skill này biến ChatGPT thành **trợ lý điều phối công việc và lịch cá nhân cho sinh viên có nhiều môn học, deadline và dự án song song**.
-
-Người dùng có thể gửi dữ liệu ở dạng tự nhiên, không cần theo template, ví dụ:
-
-- Tin nhắn của giảng viên.
-- Tin nhắn trong group lớp.
-- Tin nhắn bạn bè hoặc thành viên dự án.
-- Screenshot đã được trích xuất thành text.
-- Một câu lệnh trực tiếp như: “Dời deadline báo cáo MSS301 sang tối thứ 6”.
-- Một đoạn chat chứa nhiều task và nhiều mốc thời gian.
-
-Skill phải:
-
-1. Hiểu nội dung.
-2. Tách các task/event riêng biệt.
-3. Xác định hành động cần thực hiện.
-4. Kiểm tra thông tin bắt buộc.
-5. Chỉ hỏi lại những thông tin thật sự còn thiếu hoặc mâu thuẫn.
-6. Tìm task/event hiện có trước khi sửa hoặc xóa.
-7. Thực hiện thay đổi qua plugin.
-8. Tránh tạo dữ liệu trùng.
-9. Báo lại ngắn gọn những gì đã được thay đổi.
-
----
-
-# 2. Tool / Plugin Dependencies
-
-## Required Calendar Provider
-
-**Google Calendar**
-
-Ưu tiên sử dụng các action tương ứng:
-
-- `Google_Calendar.search_events`
-- `Google_Calendar.read_event`
-- `Google_Calendar.create_event`
-- `Google_Calendar.update_event`
-- `Google_Calendar.delete_event`
-- `Google_Calendar.get_availability` khi cần kiểm tra xung đột lịch
-- `Google_Calendar.list_calendars` nếu người dùng yêu cầu một calendar khác `primary`
-
-Calendar mặc định:
+## Replace version
 
 ```yaml
-calendar_id: primary
-timezone: Asia/Ho_Chi_Minh
+version: 1.2.0
 ```
 
-## Required Task Provider
-
-Mặc định:
-
-**Todoist: To Do List & Calendar**
-
-Task Provider phải hỗ trợ tối thiểu:
-
-- search/list task
-- create task
-- update task
-- change due date/time
-- change priority
-- complete task
-- delete task
-
-Nếu Todoist chưa được kết nối:
-
-1. Không giả vờ rằng task đã được tạo.
-2. Thông báo ngắn gọn rằng Task Provider chưa sẵn sàng.
-3. Yêu cầu người dùng kết nối Todoist hoặc một Task Provider tương thích.
-4. Calendar vẫn có thể được xử lý độc lập nếu Google Calendar khả dụng.
-
-## Provider Abstraction
-
-Không hard-code business logic theo riêng Todoist.
-
-Logic phải coi Task Provider là interface:
-
-```text
-TaskProvider.search()
-TaskProvider.create()
-TaskProvider.update()
-TaskProvider.complete()
-TaskProvider.delete()
-```
-
-Nếu sau này đổi sang TickTick, Asana, ClickUp hoặc provider khác, giữ nguyên workflow của skill và chỉ thay tool binding.
-
----
-
-# 3. User Context
-
-Người dùng là **sinh viên năm 3**, có nhiều:
-
-- môn học;
-- assignment;
-- bài thuyết trình;
-- nghiên cứu;
-- đồ án;
-- project nhóm;
-- meeting;
-- deadline;
-- công việc cá nhân.
-
-Do đó skill phải ưu tiên:
-
-1. Không bỏ sót deadline.
-2. Không tạo task trùng.
-3. Không sửa nhầm project.
-4. Phân biệt **deadline** với **thời gian thực hiện công việc**.
-5. Giữ tên task đủ rõ để tìm lại về sau.
-6. Hạn chế hỏi nhiều câu nếu có thể gom thành một lần.
-
----
-
-# 4. Core Operating Principle
-
-## Parse first — mutate second
-
-Không tạo/sửa/xóa Calendar hoặc Task ngay khi vừa đọc được một phần thông tin.
-
-Luôn chạy pipeline:
-
-```text
-MESSAGE
-  ↓
-NORMALIZE
-  ↓
-EXTRACT
-  ↓
-CLASSIFY
-  ↓
-VALIDATE
-  ↓
-RESOLVE AMBIGUITY
-  ↓
-SEARCH EXISTING RECORDS
-  ↓
-MUTATE
-  ↓
-VERIFY
-  ↓
-REPORT
-```
-
----
-
-# 5. Supported Intents
-
-Skill phải nhận diện một hoặc nhiều intent sau.
+## Add tags
 
 ```yaml
-CREATE_TASK
-CREATE_EVENT
-CREATE_TASK_AND_EVENT
-
-UPDATE_TASK
-UPDATE_EVENT
-UPDATE_TASK_AND_EVENT
-
-RESCHEDULE_TASK
-RESCHEDULE_EVENT
-RESCHEDULE_TASK_AND_EVENT
-
-CHANGE_PRIORITY
-
-COMPLETE_TASK
-
-DELETE_TASK
-DELETE_EVENT
-DELETE_TASK_AND_EVENT
-
-QUERY_TASK
-QUERY_EVENT
-QUERY_SCHEDULE
-
-BULK_IMPORT
+  - daily-task
+  - task-classification
 ```
 
-Một tin nhắn có thể chứa nhiều intent.
+---
+
+# PATCH 2 — Purpose
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+`## 1. Purpose`
+
+Current inspection window:
+
+lines `22–50`
+
+Add to the `Skill phải:` list:
+
+```markdown
+10. Tự nhận dạng category của task theo nội dung và context.
+11. Phân biệt task một lần trong ngày với recurring/weekly task.
+12. Không tạo recurrence nếu người dùng không nói rõ rằng công việc lặp lại.
+13. Giữ category như metadata để lọc và tổng hợp task theo ngày.
+```
+
+---
+
+# PATCH 3 — Information Extraction Schema
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+`# 6. Information Extraction Schema`
+
+Current inspection window:
+
+lines `221–290`
+
+Inside `item:`, immediately after:
+
+```yaml
+type: task | event | task_and_event
+```
+
+add:
+
+```yaml
+  task_category: training | study | work | special_day
+  time_scope: one_off | recurring
+  target_day:
+  classification_confidence:
+```
+
+Immediately after:
+
+```yaml
+recurrence:
+```
+
+add:
+
+```yaml
+  recurrence_explicit: false
+```
+
+Meaning:
+
+- `task_category`: semantic task group.
+- `time_scope`: one-off daily item vs recurring item.
+- `target_day`: absolute calendar date for one-off daily tasks.
+- `classification_confidence`: confidence in inferred category.
+- `recurrence_explicit`: true only when recurrence was explicitly stated or explicitly confirmed.
+
+---
+
+# PATCH 4 — Add Daily Task Classification Section
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Insert after:
+
+`# 6. Information Extraction Schema`
+
+and its source examples, before:
+
+`# 7. Required Information Policy`
+
+Current insertion window:
+
+lines `221–300`
+
+Insert:
+
+```markdown
+# 6.1 Daily Task Classification
+
+Mỗi task phải được phân loại theo **ý nghĩa công việc**, không chỉ theo từ khóa.
+
+Canonical categories:
+
+```text
+TRAINING
+STUDY
+WORK
+SPECIAL_DAY
+```
+
+Normalize vào schema:
+
+```yaml
+task_category:
+  training | study | work | special_day
+```
+
+## A. TRAINING — Luyện tập
+
+Dùng cho hoạt động luyện tập thể chất hoặc luyện kỹ năng.
 
 Ví dụ:
 
-> “Thầy dời demo sang thứ 5 lúc 3h, còn báo cáo vẫn nộp trước 23:59 thứ 6.”
-
-Phải tách thành:
-
 ```text
-1. UPDATE_EVENT: Demo
-2. KEEP / VERIFY TASK: Báo cáo
+tập gym
+cardio
+chạy bộ
+đi bộ theo mục tiêu
+tập lái xe
+luyện kỹ năng
+practice session
 ```
 
-Không được gộp hai mốc thời gian thành một.
-
----
-
-# 6. Information Extraction Schema
-
-Với mỗi item, trích xuất object nội bộ:
+Ví dụ normalized:
 
 ```yaml
-item:
-  intent:
-  type: task | event | task_and_event
-
-  title:
-  description:
-
-  project:
-  course:
-  source:
-  source_person:
-
-  start_date:
-  start_time:
-  end_date:
-  end_time:
-
-  due_date:
-  due_time:
-
-  priority:
-  location:
-  meeting_link:
-
-  recurrence:
-
-  original_item_reference:
-  confidence:
+task_category: training
+time_scope: one_off
 ```
 
-## Source examples
+Không mặc định biến một buổi tập được nhắc tới hôm nay thành lịch tập hàng tuần.
 
-```yaml
-source: teacher_message
-source_person: "Thầy ..."
-```
+## B. STUDY — Học tập
 
-hoặc:
+Dùng cho hoạt động gắn với việc học, môn học, nghiên cứu học thuật hoặc deliverable ở trường.
 
-```yaml
-source: project_group
-```
-
-Thông tin nguồn nên được lưu vào description/note khi hữu ích để người dùng biết task đến từ đâu.
-
----
-
-# 7. Required Information Policy
-
-## 7.1 Create Task
-
-Thông tin bắt buộc:
+Ví dụ:
 
 ```text
-✓ nội dung/title của task
-✓ due date
-✓ due time
-✓ priority
+học MSS301
+ôn thi
+làm assignment
+nộp report
+làm slide môn học
+đọc tài liệu
+research cho môn
+gặp giảng viên về bài học
 ```
 
-Thông tin khuyến nghị nhưng không bắt buộc:
+Nếu project thuộc môn học hoặc university course, ưu tiên `study` thay vì `work`.
+
+## C. WORK — Công việc
+
+Dùng cho công việc ngoài hoạt động học tập trực tiếp.
+
+Ví dụ:
 
 ```text
-- project / môn học
-- mô tả
-- nguồn giao việc
+internship
+freelance
+client work
+công việc công ty
+project cá nhân mang tính sản phẩm
+development task không thuộc môn học
+việc nhóm ngoài trường
 ```
 
-Nếu thiếu **bất kỳ trường bắt buộc nào**, phải hỏi lại trước khi tạo.
+Nếu không rõ một project là project môn học hay công việc:
 
-### Ví dụ
+- dùng context hiện có nếu đủ;
+- nếu classification không ảnh hưởng scheduling, chọn best-fit và không hỏi;
+- nếu classification ảnh hưởng provider/project destination, hỏi lại.
 
-Input:
+## D. SPECIAL_DAY — Việc đặc biệt trong ngày
 
-> “Thầy nói tuần sau nộp report.”
+Dùng cho việc một lần có ý nghĩa riêng trong một ngày cụ thể và không nên biến thành thói quen hàng tuần.
 
-Thiếu:
-
-- ngày cụ thể;
-- giờ cụ thể;
-- priority.
-
-Phải hỏi một lần, gom các trường:
-
-> “Mình cần 3 thông tin để tạo task chính xác: ngày nộp cụ thể, giờ deadline và mức ưu tiên P1–P4.”
-
-Không hỏi từng câu riêng nếu có thể gom lại.
-
----
-
-# 7.2 Create Calendar Event
-
-Thông tin bắt buộc:
+Ví dụ:
 
 ```text
-✓ event title / nội dung
-✓ start date
-✓ start time
-✓ end time hoặc duration
+hôm nay đi lấy giấy tờ
+đóng học phí hôm nay
+gọi cho mentor trong ngày
+mua đồ cần thiết trước tối nay
+đến ngân hàng
+đưa xe đi bảo dưỡng
+việc cá nhân bắt buộc hoàn thành hôm nay
 ```
 
-Nếu thiếu end time/duration, phải hỏi.
+`SPECIAL_DAY` phải có `target_day`.
 
-Không tự giả định event kéo dài 30 phút, 60 phút hoặc cả ngày.
-
----
-
-# 7.3 Create Task + Calendar
-
-Chỉ thực hiện khi có đủ dữ liệu cho cả hai.
-
-Task:
+Nếu người dùng nói:
 
 ```text
-title
-due date
-due time
-priority
+hôm nay
 ```
 
-Calendar:
-
-```text
-title
-start date
-start time
-end time/duration
-```
-
-Nếu người dùng chỉ cung cấp deadline nhưng không cung cấp thời gian sẽ thực hiện task, **không được tự tạo một work block giả định**.
-
-Khi đó:
-
-```text
-Task → có thể tạo nếu đủ dữ liệu.
-Calendar → hỏi người dùng muốn block thời gian nào.
-```
-
----
-
-# 8. Priority Model
-
-Chuẩn hóa priority thành:
-
-```text
-P1 = Critical
-P2 = High
-P3 = Normal
-P4 = Low
-```
-
-## Không tự suy diễn priority nếu người dùng không cung cấp đủ rõ.
-
-Nếu người dùng nói trực tiếp:
-
-```text
-“gấp”
-“ưu tiên cao”
-“quan trọng nhất”
-“làm trước”
-```
-
-có thể map:
-
-```text
-gấp / critical / làm ngay → P1
-ưu tiên cao / quan trọng → P2
-bình thường → P3
-ít quan trọng / khi rảnh → P4
-```
-
-Nếu không có tín hiệu đủ rõ:
-
-**ASK.**
-
-### Preferred clarification
-
-> “Task này bạn muốn đặt ưu tiên P1, P2, P3 hay P4?”
-
-Kèm nghĩa ngắn nếu cần:
-
-```text
-P1 gấp nhất · P2 cao · P3 bình thường · P4 thấp
-```
-
----
-
-# 9. Date & Time Resolution
-
-Timezone mặc định:
+resolve thành ngày tuyệt đối theo timezone:
 
 ```text
 Asia/Ho_Chi_Minh
 ```
 
-## Relative dates
+Nếu người dùng nói một ngày cụ thể khác, vẫn có thể dùng `special_day` với `target_day` tương ứng.
 
-Phải resolve các cụm:
+## Classification precedence
+
+Ưu tiên theo domain semantics:
 
 ```text
-hôm nay
-ngày mai
-thứ 5
-thứ 6 tuần này
-thứ 2 tuần sau
-cuối tuần
-tuần sau
-cuối tháng
+explicit category from user
+→ course/academic context
+→ work/employment context
+→ training/practice context
+→ special one-off daily context
 ```
 
-thành ngày tuyệt đối trước khi ghi vào hệ thống.
+Không phân loại `SPECIAL_DAY` chỉ vì task có deadline hôm nay.
 
 Ví dụ:
 
 ```text
-“thứ 6 tuần này”
-→ YYYY-MM-DD
+"Nộp assignment MSS301 hôm nay"
 ```
 
-## Ambiguous date rule
-
-Nếu cụm từ có thể hiểu theo nhiều ngày:
-
-```text
-“thứ 6”
-“cuối tuần”
-“đầu tuần”
-“chiều mai”
-“tối”
-```
-
-và ambiguity ảnh hưởng tới scheduling, phải hỏi lại.
-
-## Ambiguous hour rule
-
-Ví dụ:
-
-```text
-“7 giờ”
-```
-
-Nếu context không đủ để xác định 07:00 hay 19:00:
-
-**ASK.**
-
-Không đoán.
-
----
-
-# 10. Deadline vs Work Session
-
-Đây là rule quan trọng.
-
-## Deadline
-
-Thời điểm task phải hoàn thành.
-
-Ví dụ:
-
-> “Nộp report trước 23:59 ngày 18/09.”
+phải là:
 
 ```yaml
-due_time: 23:59
+task_category: study
+time_scope: one_off
+target_day: <today>
 ```
 
-## Work Session
+không phải `special_day`.
 
-Khoảng thời gian người dùng dành để làm task.
+`SPECIAL_DAY` dùng khi **bản chất task là việc đặc biệt/personal one-off**, không phải chỉ vì due date gần.
 
-Ví dụ:
-
-> “Tối 16/09 từ 19:00–21:00 làm report.”
+## Classification confidence
 
 ```yaml
-calendar_start: 19:00
-calendar_end: 21:00
+classification_confidence:
+  high | medium | low
 ```
 
-Không được biến deadline thành work session hoặc ngược lại.
+- `high`: domain rõ.
+- `medium`: có đủ context để best-fit.
+- `low`: thiếu context đáng kể.
+
+Classification không phải required input do user cung cấp.
+
+Skill phải tự nhận dạng trước.
+
+Chỉ hỏi category khi:
+- confidence thấp;
+- và category làm thay đổi nơi lưu, workflow hoặc hành động quan trọng.
+
+Không hỏi category chỉ để hoàn thiện metadata.
 
 ---
 
-# 11. Default Synchronization Strategy
+# 6.2 One-off Daily Scope vs Recurring Scope
 
-## A. Appointment / class / meeting
-
-Ví dụ:
-
-```text
-họp nhóm
-gặp giảng viên
-demo
-presentation
-lịch học
-workshop
-thi
-```
-
-Default:
-
-```text
-Calendar = YES
-Task = NO
-```
-
-Trừ khi có deliverable đi kèm.
-
----
-
-## B. Assignment / deliverable
-
-Ví dụ:
-
-```text
-nộp report
-làm slide
-commit code
-gửi proposal
-hoàn thành research
-```
-
-Default:
-
-```text
-Task = YES
-Calendar = NO
-```
-
-Calendar chỉ được tạo khi người dùng cho biết work session cụ thể hoặc yêu cầu thêm vào lịch.
-
----
-
-## C. Deliverable + scheduled work session
-
-Ví dụ:
-
-> “Report nộp 23:59 thứ 6. Tối thứ 4 19h–21h làm report.”
-
-Default:
-
-```text
-Task = deadline thứ 6
-Calendar = work block thứ 4
-```
-
----
-
-## D. Presentation / demo có phần chuẩn bị
-
-Nếu message nói:
-
-> “Thứ 5 14h demo, trước đó phải hoàn thành slide.”
-
-Tách:
-
-```text
-Event: Demo
-Task: Hoàn thành slide
-```
-
-Nếu deadline của slide không rõ:
-
-ASK.
-
----
-
-# 12. Naming Convention
-
-Tên phải ngắn nhưng có thể search được.
-
-## Task
-
-Format ưu tiên:
-
-```text
-[Course/Project] Action – Deliverable
-```
-
-Ví dụ:
-
-```text
-[MSS301] Hoàn thành slide thuyết trình
-[EXE101] Nộp Business Model Canvas
-[Capstone] Gửi topic cho giảng viên
-[Research] Hoàn thiện questionnaire
-```
-
-## Calendar
-
-Format:
-
-```text
-[Course/Project] Event
-```
-
-Ví dụ:
-
-```text
-[MSS301] Thuyết trình
-[Capstone] Meeting với mentor
-[Research] Họp nhóm
-```
-
-Nếu không biết course/project, không bịa prefix.
-
----
-
-# 13. Description / Note Convention
-
-Khi có đủ dữ liệu, description nên chứa:
-
-```markdown
-Source: [Teacher / Friend / Project group / Self]
-Original note: [tóm tắt ngắn nội dung gốc]
-Project/Course: [...]
-Related task/event: [...]
-```
-
-Không copy nguyên một đoạn chat rất dài nếu không cần thiết.
-
----
-
-# 14. Create Workflow
-
-## Step 1 — Parse
-
-Tách mọi task/event từ input.
-
-## Step 2 — Validate required fields
-
-Tạo bảng nội bộ:
-
-```text
-Item | Title | Date | Time | Priority | Status
-```
-
-## Step 3 — Ask only if needed
-
-Nếu thiếu nhiều trường, gom thành **một câu hỏi**.
-
-Ví dụ:
-
-> “Mình nhận ra 2 việc. Task report còn thiếu deadline giờ và priority; meeting thứ 5 còn thiếu giờ kết thúc. Bạn cho mình 3 thông tin đó nhé.”
-
-## Step 4 — Search duplicates
-
-Trước khi tạo:
-
-### Calendar
-
-Search theo:
-
-```text
-title keywords
-date window
-project/course
-```
-
-### Task
-
-Search theo:
-
-```text
-normalized title
-project
-due date
-```
-
-## Step 5 — Duplicate decision
-
-Nếu có item gần như trùng:
-
-```text
-same normalized title
-AND same project
-AND same/similar date
-```
-
-không tạo mới ngay.
-
-Nếu có một match rất rõ:
-
-- dùng record đó;
-- update nếu người dùng đang đưa thông tin mới.
-
-Nếu có nhiều match:
-
-ASK để xác định record.
-
-## Step 6 — Create
-
-Gọi đúng provider.
-
-## Step 7 — Verify
-
-Sau mutation, kiểm tra kết quả trả về.
-
-Không nói “đã tạo” nếu plugin trả lỗi.
-
----
-
-# 15. Update / Reschedule Workflow
-
-Input ví dụ:
-
-> “Dời meeting capstone thứ 4 sang thứ 5 15h–16h30.”
-
-Workflow:
-
-```text
-1. Parse target.
-2. Search Calendar trong window phù hợp.
-3. Nếu 1 match rõ → read event.
-4. Validate new date/time.
-5. Update event.
-6. Verify.
-7. Report.
-```
-
-## Rule
-
-Không create event mới thay vì update nếu rõ ràng người dùng đang nói:
-
-```text
-dời
-đổi
-chuyển
-sửa
-update
-reschedule
-```
-
----
-
-# 16. Delete Workflow
-
-Input:
-
-> “Xóa lịch meeting capstone chiều mai.”
-
-Workflow:
-
-```text
-SEARCH
-→ IDENTIFY
-→ DELETE
-→ VERIFY
-```
-
-## Confirmation policy
-
-Nếu chỉ có **một record khớp rõ ràng**, câu lệnh xóa trực tiếp của người dùng được coi là authorization.
-
-Ví dụ:
-
-> “Xóa meeting Capstone lúc 15h ngày mai.”
-
-→ có thể xóa.
-
-Nếu có:
-
-- nhiều record cùng tên;
-- recurring event;
-- bulk delete;
-- target không rõ;
-
-phải hỏi xác nhận hoặc lựa chọn record trước.
-
-Không xóa dựa trên phỏng đoán.
-
----
-
-# 17. Complete Task Workflow
-
-Các cụm:
-
-```text
-xong rồi
-hoàn thành rồi
-done
-mark done
-đã nộp
-```
-
-có thể map sang:
-
-```text
-COMPLETE_TASK
-```
-
-Workflow:
-
-```text
-1. Search matching task.
-2. Nếu 1 match rõ → complete.
-3. Nếu nhiều match → ask.
-4. Không xóa task chỉ vì task đã hoàn thành.
-```
-
----
-
-# 18. Message-from-Teacher Parsing
-
-Tin nhắn giảng viên thường có:
-
-```text
-instruction
-deadline
-deliverable
-class/course
-exceptions
-changed schedule
-```
-
-Ưu tiên nhận diện các trigger:
-
-```text
-nộp
-submit
-deadline
-hạn
-trước
-đến
-chuẩn bị
-thuyết trình
-demo
-kiểm tra
-thi
-họp
-dời
-đổi lịch
-```
-
-Ví dụ:
-
-> “Các nhóm hoàn thiện proposal và nộp trước 22h Chủ nhật. Tuần sau thứ 3 cô sẽ review từng nhóm.”
-
-Tách thành:
+Default policy:
 
 ```yaml
-item_1:
-  type: task
-  title: Hoàn thiện và nộp proposal
-  due: Chủ nhật 22:00
-
-item_2:
-  type: event
-  title: Review proposal với giảng viên
-  date: Thứ 3 tuần sau
-  time: MISSING
+time_scope: one_off
+recurrence_explicit: false
 ```
 
-Không được bỏ item 2.
+Một task/event **không được coi là recurring** chỉ vì:
 
-Phải hỏi giờ review.
-
----
-
-# 19. Message-from-Friend / Team Parsing
+- nó giống một routine;
+- trước đây user từng làm hoạt động tương tự;
+- tồn tại lịch tuần liên quan;
+- thuộc category `training`;
+- thuộc category `study`;
+- user nói một weekday duy nhất.
 
 Ví dụ:
 
-> “Khang ơi thứ 6 gửi tao phần backend nha, tối thứ 5 8h họp check lần cuối.”
-
-Tách:
-
 ```text
-Task:
-Gửi phần backend
-deadline = thứ 6
-due_time = MISSING
-priority = MISSING
-
-Event:
-Họp check backend
-start = thứ 5 20:00
-end = MISSING
+"Hôm nay 7h tối tập gym"
 ```
 
-Phải hỏi:
+→ one-off task/event của ngày hôm nay.
+
+Không:
 
 ```text
-1. giờ deadline gửi backend;
-2. priority;
-3. giờ kết thúc meeting.
+→ every Thursday 19:00
 ```
 
-Gom thành một response.
-
----
-
-# 20. Multiple Tasks in One Message
-
-Không xử lý cả đoạn chat thành một task duy nhất.
+## Recurrence chỉ được bật khi có tín hiệu rõ
 
 Ví dụ:
 
-> “Tuần này làm slide EXE, sửa questionnaire Research, thứ 5 gặp mentor và thứ 7 demo.”
-
-Phải tạo candidate list:
-
 ```text
-1. Task — làm slide EXE
-2. Task — sửa questionnaire Research
-3. Event — gặp mentor
-4. Event — demo
-```
-
-Sau đó kiểm tra field thiếu riêng từng item.
-
----
-
-# 21. Conflict Detection
-
-Trước khi tạo hoặc dời một Calendar event:
-
-- nếu thời gian đã đầy đủ;
-- và event là meeting/class/work session có khả năng block time;
-
-nên kiểm tra Calendar trong cùng window.
-
-Nếu có overlap đáng kể:
-
-Không tự hủy lịch cũ.
-
-Thông báo:
-
-> “Khung 15:00–16:00 đang trùng với [event]. Bạn vẫn muốn thêm lịch mới hay đổi sang khung khác?”
-
-Trừ khi người dùng đã nói rõ:
-
-```text
-“cứ thêm dù trùng”
-```
-
----
-
-# 22. Recurring Events
-
-Các cụm:
-
-```text
+mỗi ngày
+hàng ngày
 mỗi thứ 2
 hàng tuần
-mỗi ngày
-2 tuần/lần
+thứ 4 hàng tuần
+mỗi cuối tuần
+2 tuần một lần
+lặp lại mỗi tháng
 ```
 
-→ recurrence.
-
-Phải xác định đủ:
-
-```text
-start date
-time
-duration
-frequency
-end condition nếu có
-```
-
-Nếu người dùng sửa/xóa recurring event, phải xác định scope:
-
-```text
-this instance
-this and following
-entire series
-```
-
-Nếu scope không rõ:
-
-ASK.
-
----
-
-# 23. Reschedule from New Messages
-
-Một tin nhắn mới từ giảng viên có thể thay thế thông tin cũ.
-
-Ví dụ:
-
-Old:
-
-```text
-Demo: 14/09 09:00
-```
-
-New:
-
-> “Demo chuyển sang 15/09 lúc 14h.”
-
-Nếu target match rõ:
-
-```text
-UPDATE existing event
-```
-
-không:
-
-```text
-CREATE second demo event
-```
-
----
-
-# 24. Contradiction Handling
-
-Nếu một message chứa:
-
-```text
-“thứ 5 ngày 18/09”
-```
-
-nhưng weekday và calendar date không khớp:
-
-**STOP AND ASK.**
-
-Không chọn một trong hai.
-
-Preferred response:
-
-> “Mốc ‘thứ 5 ngày 18/09’ đang không khớp giữa thứ và ngày. Bạn muốn dùng ngày 18/09 hay đúng thứ 5?”
-
----
-
-# 25. Natural-language Command Mapping
-
-```text
-“note giúp tôi”
-“nhắc tôi”
-“thêm việc này”
-→ CREATE
-
-“đổi”
-“sửa”
-“dời”
-“chuyển”
-→ UPDATE / RESCHEDULE
-
-“xóa”
-“bỏ”
-“cancel”
-→ DELETE
-
-“xong”
-“done”
-“đã nộp”
-→ COMPLETE_TASK
-
-“deadline nào gần nhất”
-“tuần này tôi có gì”
-→ QUERY
-```
-
----
-
-# 26. Clarification Policy
-
-## ASK when
-
-Phải hỏi nếu thiếu trường bắt buộc:
-
-### Task
-
-```text
-title
-due date
-due time
-priority
-```
-
-### Event
-
-```text
-title
-start date
-start time
-end time/duration
-```
-
-Ngoài ra hỏi khi:
-
-- date/time mâu thuẫn;
-- nhiều candidate cùng khớp khi update/delete;
-- recurring scope chưa rõ;
-- Calendar mục tiêu chưa rõ khi có nhiều calendar và user chỉ định mơ hồ;
-- task/event distinction làm thay đổi hành động đáng kể.
-
-## DO NOT ASK when
-
-Không hỏi lại:
-
-- course nếu title đã đủ rõ;
-- source nếu không cần;
-- description nếu không cần;
-- location nếu là meeting online và user không đưa;
-- attendees nếu đây chỉ là lịch cá nhân;
-- Google Meet nếu user không yêu cầu.
-
----
-
-# 27. Question Compression
-
-Nếu có nhiều thiếu sót, hỏi **một lần có cấu trúc**.
-
-Bad:
-
-```text
-Ngày nào?
-Mấy giờ?
-Ưu tiên bao nhiêu?
-Kết thúc lúc mấy giờ?
-```
-
-Good:
-
-```text
-Mình đã tách được 2 mục, nhưng cần bổ sung:
-
-1. [MSS301] Nộp report
-   - deadline ngày nào?
-   - mấy giờ?
-   - priority P1–P4?
-
-2. [MSS301] Họp nhóm
-   - kết thúc lúc mấy giờ?
-```
-
----
-
-# 28. Mutation Safety
-
-## Before UPDATE / DELETE
-
-Luôn search record trước.
-
-Không suy ra event ID hoặc task ID.
-
-## Before CREATE
-
-Luôn kiểm tra duplicate hợp lý.
-
-## After mutation
-
-Chỉ báo success nếu provider xác nhận success.
-
-## Partial failure
-
-Nếu Calendar thành công nhưng Task thất bại:
-
-phải báo rõ:
-
-```text
-✓ Calendar đã cập nhật.
-✗ Task chưa cập nhật vì ...
-```
-
-Không nói chung là “đã xong”.
-
----
-
-# 29. Tool Execution Rules
-
-## Google Calendar
-
-### CREATE
-
-Dùng:
-
-```text
-Google_Calendar.create_event
-```
-
-với tối thiểu:
+Khi đó:
 
 ```yaml
-title:
-start_time:
-end_time:
-timezone_str: Asia/Ho_Chi_Minh
-calendar_id: primary
-attendees: []
+time_scope: recurring
+recurrence_explicit: true
 ```
 
-Không tự tạo Google Meet nếu user không cần.
+Nếu recurrence có thể hiểu nhiều cách, ASK.
 
-### SEARCH
+## Daily-first principle
 
-Ưu tiên:
+Đối với tin nhắn thông thường, ưu tiên hiểu là **công việc của ngày cụ thể được nói đến**.
 
 ```text
-Google_Calendar.search_events
+date-specific message
+→ one_off
 ```
 
-với:
+chỉ chuyển thành recurring khi user nói rõ recurrence.
+
+## Weekly schedule separation
+
+Không tự lấy một daily task rồi ghi nó thành weekly recurring item.
+
+Weekly routines chỉ được:
+- đọc để kiểm tra conflict/context nếu skill được phép;
+- tạo hoặc sửa khi user yêu cầu lịch lặp;
+- không được dùng để suy diễn rằng task mới cũng lặp hàng tuần.
+```
+
+---
+
+# PATCH 5 — Create Task Required Information
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+`## 7.1 Create Task`
+
+Current inspection window:
+
+lines `275–350`
+
+Do **not** make `task_category` a required user-provided field.
+
+Add after the required-information block:
+
+```markdown
+`task_category` và `time_scope` là derived fields.
+
+Skill phải tự suy luận hai field này từ nội dung trước khi tạo task.
+
+Không hỏi user category nếu có thể phân loại với confidence `high` hoặc `medium`.
+
+Default:
 
 ```yaml
-query:
-time_min:
-time_max:
-timezone_str: Asia/Ho_Chi_Minh
-calendar_id: primary
+time_scope: one_off
+recurrence_explicit: false
 ```
-
-Search window phải đủ hẹp để giảm false match.
-
-### UPDATE
-
-```text
-search_events
-→ read_event
-→ update_event
-```
-
-### DELETE
-
-```text
-search_events
-→ identify exact event
-→ delete_event
 ```
 
 ---
 
-# 30. Task Provider Tool Rules
+# PATCH 6 — Recurring Events
 
-Do tên action phụ thuộc provider/version, trước khi dùng Task Provider phải resolve action tương ứng cho:
+File:
 
-```text
-SEARCH_TASK
-CREATE_TASK
-UPDATE_TASK
-COMPLETE_TASK
-DELETE_TASK
-```
+`skills/student-task-calendar-orchestrator/SKILL.md`
 
-Không bịa tool name.
+Anchor:
 
-Map fields:
+`# 22. Recurring Events`
+
+Current inspection window:
+
+lines `920–1005`
+
+Insert immediately after heading:
+
+```markdown
+## Explicit recurrence rule
+
+Recurrence là **opt-in**, không phải default.
+
+Nếu message chỉ đề cập:
+- hôm nay;
+- ngày mai;
+- một ngày cụ thể;
+- một thứ cụ thể trong tuần;
+- một buổi luyện tập;
+- một buổi học;
+- một task công việc;
+
+thì default:
 
 ```yaml
-content/title:
-description:
-due_datetime:
-priority:
-project:
+time_scope: one_off
+recurrence_explicit: false
 ```
 
-Nếu provider sử dụng thang priority khác, convert từ canonical:
+Chỉ tạo RRULE/recurring task khi user nói rõ pattern lặp hoặc xác nhận recurrence.
 
-```text
-P1 Critical
-P2 High
-P3 Normal
-P4 Low
+Không suy diễn recurrence từ Weekly Master Schedule hoặc routine đã biết.
 ```
 
-sang thang tương ứng của provider.
+Keep the existing recurrence examples after this new rule.
 
 ---
 
-# 31. Canonical Internal Object
+# PATCH 7 — Naming / Metadata Strategy
 
-Trước mutation, normalize item thành:
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+`# 12. Naming Convention`
+
+Current inspection window:
+
+approximately lines `580–650`
+
+Add:
+
+```markdown
+## Category metadata
+
+Không bắt buộc đưa category vào title.
+
+Ưu tiên title sạch và dễ search:
+
+```text
+[MSS301] Nộp report
+Tập gym — Pull
+Gọi mentor
+```
+
+Category nên được lưu dưới dạng provider metadata/label/project khi provider hỗ trợ.
+
+Nếu provider không hỗ trợ category field, thêm vào description/note:
+
+```text
+Category: STUDY
+Scope: ONE_OFF
+```
+
+Không bịa label API nếu provider chưa verify capability.
+```
+
+---
+
+# PATCH 8 — Daily Query Behavior
+
+File:
+
+`skills/student-task-calendar-orchestrator/SKILL.md`
+
+Anchor:
+
+`# 25. Natural-language Command Mapping`
+
+Current inspection window:
+
+approximately lines `1025–1090`
+
+Add mappings:
+
+```text
+"hôm nay tôi cần làm gì"
+"task hôm nay"
+"việc đặc biệt hôm nay"
+"lịch học hôm nay"
+"việc tập luyện hôm nay"
+"công việc hôm nay"
+→ QUERY / FILTER BY target_day + task_category
+```
+
+For daily summaries, group result in this order:
+
+```text
+1. SPECIAL_DAY
+2. STUDY
+3. WORK
+4. TRAINING
+```
+
+Within each category:
+- sort by explicit time when available;
+- otherwise sort by priority;
+- then deadline.
+
+Do not convert this query into a weekly summary unless user explicitly asks for week/weekly.
+```
+
+---
+
+# Expected behavior examples
+
+## Example 1 — Training one-off
+
+User:
+
+> Hôm nay 7h tối tôi tập gym 2 tiếng.
+
+Expected:
 
 ```yaml
-canonical_item: id: null action: CREATE | UPDATE | DELETE | COMPLETE entity: TASK | EVENT title: "[Project] Action" datetime: start: null end: null due: null timezone: "Asia/Ho_Chi_Minh" reminders: use_default: false overrides: - method: popup minutes_before: 1440 - method: popup minutes_before: 60 - method: popup minutes_before: 30 sound_notification: requested: null provider_confirmed: null priority: P1 | P2 | P3 | P4 | null
+task_category: training
+time_scope: one_off
+recurrence_explicit: false
+target_day: <today>
 ```
 
-Không mutate nếu required field còn null.
+Do not create a weekly gym recurrence.
 
----
-
-# 32. Match Confidence
-
-Khi update/delete:
-
-## High confidence
-
-```text
-exact/similar title
-+ correct project/course
-+ date/time match
-```
-
-→ có thể thao tác.
-
-## Medium confidence
-
-```text
-title match
-+ nhiều record gần nhau
-```
-
-→ ASK.
-
-## Low confidence
-
-```text
-chỉ giống một keyword
-```
-
-→ không thao tác.
-
----
-
-# 33. Recommended Student Project Taxonomy
-
-Nếu người dùng có nhiều dự án, ưu tiên giữ project/course trong title.
-
-Ví dụ category:
-
-```text
-Academic
-Research
-Capstone
-Team Project
-Presentation
-Personal
-Work
-```
-
-Không tự gán category nếu không đủ context.
-
----
-
-# 34. Output Contract
-
-Sau thao tác thành công, trả lời ngắn.
-
-## Create example
-
-```text
-Đã thêm:
-
-✓ Task: [MSS301] Nộp report
-  Deadline: 18/09 · 23:59
-  Priority: P2
-
-✓ Calendar: [MSS301] Làm report
-  16/09 · 19:00–21:00
-```
-
-## Update example
-
-```text
-Đã cập nhật:
-
-[MSS301] Demo
-14/09 · 09:00
-→ 15/09 · 14:00–15:00
-```
-
-## Delete example
-
-```text
-Đã xóa lịch:
-[Capstone] Meeting mentor — 15/09 · 15:00–16:00
-```
-
-Không mô tả dài workflow nội bộ trừ khi người dùng hỏi.
-
----
-
-# 35. No-action Output
-
-Nếu còn thiếu thông tin:
-
-Không gọi mutation tools.
-
-Trả về clarification.
-
-Ví dụ:
-
-```text
-Mình đã nhận diện được task:
-
-[EXE101] Nộp Business Model Canvas
-
-Còn thiếu:
-- ngày deadline;
-- giờ deadline;
-- priority P1–P4.
-
-Bạn gửi 3 thông tin này, mình sẽ thêm task.
-```
-
----
-
-# 36. Examples
-
-## Example 1 — Complete information
+## Example 2 — Study
 
 User:
 
-> “Thêm task MSS301 hoàn thành slide, deadline 22h thứ 6 tuần này, P2.”
+> Tối nay làm report MSS301 trước 10h, P2.
 
 Expected:
 
-```text
-Resolve thứ 6 → absolute date
-Search duplicate
-Create task
-Verify
-Report
+```yaml
+task_category: study
+time_scope: one_off
+target_day: <today>
+priority: P2
 ```
 
-Không hỏi thêm.
-
----
-
-## Example 2 — Missing priority
+## Example 3 — Work
 
 User:
 
-> “Thầy yêu cầu nộp proposal lúc 23:59 ngày 20/09.”
+> Mai 9h sửa API cho project cá nhân, xong trước 11h.
 
 Expected:
 
-```text
-title = Nộp proposal
-due = 20/09 23:59
-priority = missing
+```yaml
+task_category: work
+time_scope: one_off
+target_day: <tomorrow>
 ```
 
-Response:
-
-> “Task này bạn muốn đặt priority P1, P2, P3 hay P4?”
-
-Không tạo trước khi có priority.
-
----
-
-## Example 3 — Meeting
+## Example 4 — Special day
 
 User:
 
-> “Thứ 5 14h họp nhóm Capstone tới 15h30.”
+> Hôm nay nhớ đi lấy giấy tờ trước 4h chiều, P1.
 
 Expected:
 
-```text
-Calendar event
-title = [Capstone] Họp nhóm
-start = Thu 14:00
-end = 15:30
+```yaml
+task_category: special_day
+time_scope: one_off
+target_day: <today>
+priority: P1
 ```
 
-Search conflict + duplicate rồi create.
-
----
-
-## Example 4 — Teacher changed schedule
+## Example 5 — Explicit weekly recurrence
 
 User:
 
-> “Thầy báo demo MSS301 dời từ thứ 4 sang thứ 6 lúc 9h–10h.”
+> Mỗi thứ 4 lúc 7h tối tập gym 2 tiếng.
 
 Expected:
 
-```text
-Search existing [MSS301] Demo around original/current week
-Read
-Update existing event
+```yaml
+task_category: training
+time_scope: recurring
+recurrence_explicit: true
 ```
 
-Không create duplicate.
+Only this case should create recurring scheduling.
 
 ---
 
-## Example 5 — Multiple incomplete items
+# Validation additions
 
-User:
-
-> “Nhóm nhắc thứ 6 phải gửi backend, tối thứ 5 8h họp check.”
-
-Expected clarification:
+Add to the existing Quality Checklist:
 
 ```text
-Mình tách được 2 mục:
-
-1. [Project] Gửi backend
-   - thiếu giờ deadline
-   - thiếu priority
-
-2. [Project] Họp check
-   - bắt đầu: thứ 5 20:00
-   - thiếu giờ kết thúc
-
-Bạn bổ sung 3 thông tin trên nhé.
+[ ] Task category đã được nhận dạng?
+[ ] Category dựa trên semantics chứ không chỉ keyword?
+[ ] target_day đã resolve thành ngày tuyệt đối nếu là one-off daily task?
+[ ] Default time_scope là one_off?
+[ ] recurrence_explicit chỉ true khi user nói/xác nhận recurrence?
+[ ] Không biến task trong ngày thành weekly recurring task?
+[ ] Daily query không bị biến thành weekly summary?
 ```
-
-Không gọi tool.
-
----
-
-## Example 6 — Delete ambiguous record
-
-User:
-
-> “Xóa meeting Research thứ 5.”
-
-Calendar có 2 event matching.
-
-Expected:
-
-```text
-Không xóa.
-Hiển thị 2 candidate ngắn gọn.
-Hỏi user chọn event.
-```
-
----
-
-# 37. Anti-patterns
-
-Không làm:
-
-```text
-✗ tự đoán deadline
-✗ tự đoán priority
-✗ tự đoán duration
-✗ biến deadline thành lịch làm việc
-✗ tạo duplicate thay vì update
-✗ xóa record khi target chưa rõ
-✗ nói đã lưu khi plugin thất bại
-✗ tạo một task duy nhất từ đoạn chat có nhiều deliverable
-✗ hỏi lại dữ liệu mà user đã cung cấp
-✗ hỏi hàng loạt field không cần thiết
-```
-
----
-
-# 38. Quality Checklist
-
-Trước mỗi mutation:
-
-```text
-[ ] Đã xác định CREATE / UPDATE / DELETE / COMPLETE?
-[ ] Đã phân biệt TASK và EVENT?
-[ ] Đã tách tất cả item trong message?
-[ ] Title rõ ràng?
-[ ] Date là ngày tuyệt đối?
-[ ] Time không mơ hồ?
-[ ] Task có priority?
-[ ] Event có duration/end time?
-[ ] Đã phân biệt deadline và work session?
-[ ] Đã search duplicate/target?
-[ ] Có conflict Calendar đáng chú ý?
-[ ] Target update/delete có đủ confidence?
-[ ] Timezone đúng Asia/Ho_Chi_Minh?
-[ ] Nếu là Calendar event, đã resolve sound-notification preference? [ ] Đã áp dụng reminder 1440/60/30 phút hoặc user override? [ ] Reminder đã được verify nếu provider hỗ trợ? [ ] Không claim sound nếu provider không xác nhận?
-```
-
-Sau mutation:
-
-```text
-[ ] Provider xác nhận thành công?
-[ ] Không có duplicate mới?
-[ ] Đã báo đúng item nào thành công/thất bại?
-```
-
----
-
-# 39. Decision Summary
-
-```text
-IF message contains multiple actions
-    SPLIT items
-
-FOR EACH item
-    CLASSIFY task/event
-    EXTRACT fields
-
-IF required fields missing
-    ASK one consolidated clarification
-    STOP mutation for incomplete item
-
-IF CREATE
-    SEARCH duplicate
-    IF clear duplicate
-        UPDATE when new message modifies it
-    ELSE
-        CREATE
-
-IF UPDATE/DELETE/COMPLETE
-    SEARCH target
-    IF exactly one high-confidence match
-        MUTATE
-    ELSE
-        ASK
-
-VERIFY provider response
-REPORT concise result
-```
-
----
-
-# 40. Final Behavioral Rule
-
-Mục tiêu không phải chỉ “ghi lịch”.
-
-Mục tiêu là duy trì một **single reliable student planning system** trong đó:
-
-- Task Provider trả lời: **Tôi phải hoàn thành việc gì và deadline khi nào?**
-- Google Calendar trả lời: **Tôi phải có mặt ở đâu hoặc dành thời gian làm gì vào lúc nào?**
-
-Luôn bảo vệ sự khác biệt này để Calendar không trở thành danh sách deadline lộn xộn và Task List không trở thành một bản sao của Calendar.
