@@ -1,0 +1,8 @@
+{
+  "library": "chatgpt-skill-library",
+  "version": "1.0.0",
+  "entry_index": "SKILL_INDEX.md",
+  "skills_directory": "skills",
+  "skill_entry_file": "SKILL.md",
+  "naming": "kebab-case"
+}
