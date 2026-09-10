@@ -1,46 +1,63 @@
-# ChatGPT Skill Library
+# khang-ai-skills
 
-Bộ khung này dùng để tổ chức các **Skill** theo dạng module độc lập, dễ đọc bởi AI và dễ mở rộng về sau.
+A reusable collection of personal AI skills for different tasks, projects, and workflows.
 
-## Cấu trúc tổng quát
+## Purpose
+
+Repository này là **source of truth** cho bộ skill cá nhân của tôi. Mỗi skill là một module độc lập, có thể tái sử dụng, cập nhật và mở rộng mà không phụ thuộc vào một cuộc hội thoại cụ thể.
+
+## Repository structure
 
 ```text
-chatgpt-skill-library/
+khang-ai-skills/
 ├── README.md
+├── manifest.yaml
+├── manifest.json
 ├── SKILL_INDEX.md
 ├── CONVENTIONS.md
 └── skills/
     ├── _sample-skill/
-    │   ├── SKILL.md
-    │   ├── references/
-    │   ├── examples/
-    │   ├── templates/
-    │   └── scripts/
-    └── code-review/
-        ├── SKILL.md
-        ├── references/
-        ├── examples/
-        └── templates/
+    ├── code-review/
+    └── student-task-calendar-orchestrator/
 ```
 
-## Cách tạo một Skill mới
+## Skill loading policy
 
-1. Copy folder `skills/_sample-skill/`.
-2. Đổi tên folder thành dạng `kebab-case`, ví dụ `spring-boot-api-review`.
-3. Sửa phần metadata và nội dung trong `SKILL.md`.
-4. Chỉ thêm các thư mục cần thiết:
-   - `references/`: tiêu chuẩn, guideline, kiến thức nền.
-   - `examples/`: input/output mẫu.
-   - `templates/`: mẫu đầu ra tái sử dụng.
-   - `scripts/`: script hỗ trợ nếu skill cần thao tác tự động.
-5. Cập nhật `SKILL_INDEX.md`.
+1. Đọc `manifest.yaml` trên branch `main`.
+2. Đọc `SKILL_INDEX.md` để xác định skill phù hợp.
+3. Chỉ load `SKILL.md` của skill được chọn.
+4. Chỉ đọc `references/`, `examples/`, `templates/`, `scripts/` khi cần.
+5. Luôn ưu tiên phiên bản hiện tại trên GitHub thay vì bản cũ trong hội thoại.
 
-## Nguyên tắc thiết kế
+```text
+User request
+→ manifest.yaml
+→ SKILL_INDEX.md
+→ matched SKILL.md
+→ required resources
+→ required tools/plugins
+→ execute
+→ verify
+```
 
-- Một Skill nên giải quyết **một nhóm nhiệm vụ rõ ràng**.
-- `SKILL.md` là file bắt buộc và là nguồn hướng dẫn chính.
-- Đưa thông tin dài, bảng tiêu chuẩn và tài liệu tra cứu sang `references/`.
-- Đưa format đầu ra cố định sang `templates/`.
-- Đưa ví dụ few-shot sang `examples/`.
-- Không nhồi toàn bộ kiến thức vào `SKILL.md`; giữ file này ngắn, có tính điều phối.
-- Viết chỉ dẫn dưới dạng hành động cụ thể: `Do`, `Check`, `Return`, `Avoid`.
+## Source of truth
+
+```yaml
+provider: github
+repository: MinhKhang17/khang-ai-skills
+branch: main
+manifest: manifest.yaml
+index: SKILL_INDEX.md
+```
+
+`manifest.yaml` là registry machine-readable chính. `SKILL_INDEX.md` là registry human/AI-readable. `manifest.json` chỉ được giữ để tương thích với cấu trúc cũ.
+
+## Creating a new skill
+
+1. Copy `skills/_sample-skill/`.
+2. Đổi tên folder theo `kebab-case`.
+3. Viết hoặc cập nhật `SKILL.md`.
+4. Chỉ thêm resource folder khi cần.
+5. Đăng ký skill trong `manifest.yaml`.
+6. Cập nhật `SKILL_INDEX.md`.
+7. Tăng version theo Semantic Versioning khi behavior thay đổi.

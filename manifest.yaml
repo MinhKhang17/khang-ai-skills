@@ -1,0 +1,85 @@
+skill_library:
+  name: khang-ai-skills
+  description: Reusable personal AI skill library
+  version: 1.0.0
+  schema_version: 1
+  default_language: vi
+  default_timezone: Asia/Ho_Chi_Minh
+
+source_of_truth:
+  provider: github
+  repository: MinhKhang17/khang-ai-skills
+  branch: main
+  refresh_policy: latest_on_use
+  cache_policy: do_not_prefer_cached_copy
+  index_file: SKILL_INDEX.md
+
+routing:
+  strategy: intent_based
+  progressive_disclosure: true
+  load_order:
+    - manifest
+    - skill_index
+    - matched_skill
+    - referenced_resources
+
+skills:
+  sample-skill:
+    path: skills/_sample-skill/SKILL.md
+    version: 1.0.0
+    enabled: false
+    status: template
+    category: template
+    priority: 0
+
+  code-review:
+    path: skills/code-review/SKILL.md
+    version: 1.0.0
+    enabled: true
+    status: stable
+    category: software-engineering
+    priority: 50
+    intents:
+      - CODE_REVIEW
+      - BUG_FINDING
+      - REFACTOR_RECOMMENDATION
+
+  student-task-calendar-orchestrator:
+    path: skills/student-task-calendar-orchestrator/SKILL.md
+    version: 1.0.0
+    enabled: true
+    status: stable
+    category: productivity
+    priority: 100
+    intents:
+      - CREATE_TASK
+      - CREATE_EVENT
+      - CREATE_TASK_AND_EVENT
+      - UPDATE_TASK
+      - UPDATE_EVENT
+      - UPDATE_TASK_AND_EVENT
+      - RESCHEDULE_TASK
+      - RESCHEDULE_EVENT
+      - RESCHEDULE_TASK_AND_EVENT
+      - CHANGE_PRIORITY
+      - COMPLETE_TASK
+      - DELETE_TASK
+      - DELETE_EVENT
+      - DELETE_TASK_AND_EVENT
+      - QUERY_TASK
+      - QUERY_EVENT
+      - QUERY_SCHEDULE
+      - BULK_IMPORT
+    dependencies:
+      required:
+        - google-calendar
+      recommended:
+        - todoist
+
+validation:
+  require_skill_entrypoint: true
+  require_enabled_skill: true
+  require_version_match: true
+
+versioning:
+  convention: semver
