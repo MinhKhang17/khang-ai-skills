@@ -5,7 +5,7 @@ description: >
   từ giảng viên, bạn bè, nhóm dự án hoặc chính người dùng; xác định hành động
   CREATE/UPDATE/DELETE/COMPLETE/RESCHEDULE; hỏi lại khi thiếu thông tin bắt buộc;
   sau đó đồng bộ với Google Calendar và Task Provider.
-version: 1.0.0
+version: 1.1.0
 language: vi
 timezone: Asia/Ho_Chi_Minh
 primary_calendar: primary
