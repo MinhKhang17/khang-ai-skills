@@ -1,11 +1,12 @@
 ---
 name: student-task-calendar-orchestrator
 description: >
-  Quản lý task và lịch học/dự án cho sinh viên từ tin nhắn tự do. Phân tích tin nhắn
-  từ giảng viên, bạn bè, nhóm dự án hoặc chính người dùng; xác định hành động
-  CREATE/UPDATE/DELETE/COMPLETE/RESCHEDULE; hỏi lại khi thiếu thông tin bắt buộc;
-  sau đó đồng bộ với Google Calendar và Task Provider.
-version: 1.1.0
+  Quản lý task và lịch học/dự án từ tin nhắn tự do; tự nhận dạng loại task theo
+  luyện tập, học tập, công việc hoặc việc đặc biệt trong ngày; tự gán màu Google
+  Calendar theo category khi provider hỗ trợ; phân biệt task một lần với recurring
+  task; xác định CREATE/UPDATE/DELETE/COMPLETE/RESCHEDULE; hỏi lại khi thiếu thông
+  tin bắt buộc; sau đó đồng bộ với Google Calendar và Task Provider.
+version: 1.3.0
 language: vi
 timezone: Asia/Ho_Chi_Minh
 primary_calendar: primary
@@ -18,6 +19,9 @@ tags:
   - todoist
   - google-calendar
   - project-management
+  - daily-task
+  - task-classification
+  - calendar-color
 ---
 
 # Student Task & Calendar Orchestrator
@@ -46,6 +50,10 @@ Skill phải:
 7. Thực hiện thay đổi qua plugin.
 8. Tránh tạo dữ liệu trùng.
 9. Báo lại ngắn gọn những gì đã được thay đổi.
+10. Tự nhận dạng category của task theo nội dung và context.
+11. Phân biệt task một lần trong ngày với recurring/weekly task.
+12. Không tạo recurrence nếu người dùng không nói rõ rằng công việc lặp lại.
+13. Giữ category như metadata để lọc và tổng hợp task theo ngày.
 
 ---
 
@@ -62,8 +70,19 @@ Skill phải:
 - `Google_Calendar.create_event`
 - `Google_Calendar.update_event`
 - `Google_Calendar.delete_event`
+- `Google_Calendar.get_colors` khi cần gán màu Calendar
 - `Google_Calendar.get_availability` khi cần kiểm tra xung đột lịch
 - `Google_Calendar.list_calendars` nếu người dùng yêu cầu một calendar khác `primary`
+
+### Google Calendar color capability
+
+Khi cần gán màu, chỉ dùng capability đã được provider xác nhận:
+
+- `Google_Calendar.get_colors`
+- `Google_Calendar.create_event(..., color_id=...)`
+- `Google_Calendar.update_event(..., color_id=...)`
+
+`color_id` phải là event palette key của Google Calendar, không phải mã hex. Nếu user chỉ định tên màu, resolve qua `get_colors` trước khi mutation. Không tự bịa color ID.
 
 Calendar mặc định:
 
@@ -228,6 +247,11 @@ item:
   intent:
   type: task | event | task_and_event
 
+  task_category: training | study | work | special_day
+  time_scope: one_off | recurring
+  target_day:
+  classification_confidence: high | medium | low
+
   title:
   description:
 
@@ -249,6 +273,12 @@ item:
   meeting_link:
 
   recurrence:
+  recurrence_explicit: false
+
+  requested_color:
+  semantic_color:
+  resolved_color_id:
+  color_source: user_override | category_default | calendar_default
 
   original_item_reference:
   confidence:
@@ -268,6 +298,78 @@ source: project_group
 ```
 
 Thông tin nguồn nên được lưu vào description/note khi hữu ích để người dùng biết task đến từ đâu.
+
+---
+
+# 6.1 Daily Task Classification
+
+Phân loại theo ý nghĩa công việc, không chỉ theo keyword:
+
+- `training`: tập gym, cardio, chạy bộ, luyện kỹ năng, practice session.
+- `study`: học môn, ôn thi, assignment, report/slide môn học, nghiên cứu học thuật, gặp giảng viên. Nếu project thuộc course/university thì ưu tiên `study`.
+- `work`: internship, freelance, client work, công việc công ty, project sản phẩm cá nhân, development task ngoài môn học.
+- `special_day`: việc cá nhân một lần gắn với một ngày cụ thể, như lấy giấy tờ, đóng học phí, đến ngân hàng hoặc bảo dưỡng xe. Category này phải có `target_day`.
+
+Precedence:
+
+```text
+explicit user category → academic context → work context → training context → special-day context
+```
+
+Không chọn `special_day` chỉ vì deadline là hôm nay. “Nộp assignment MSS301 hôm nay” vẫn là `study`.
+
+Confidence `high` khi domain rõ, `medium` khi có đủ context để best-fit, `low` khi thiếu context đáng kể. Chỉ hỏi category khi confidence thấp và category làm thay đổi provider, workflow hoặc hành động quan trọng.
+
+## 6.2 Calendar Color Policy
+
+Khi user không chỉ định màu, màu Calendar được suy ra từ semantic category:
+
+```text
+TRAINING     → GREEN
+STUDY        → BLUE
+WORK         → ORANGE
+SPECIAL_DAY  → RED
+```
+
+Preferred event palette mapping, cần xác minh bằng `get_colors` trước khi dùng:
+
+```yaml
+training:
+  semantic_color: green
+  preferred_event_color_id: "10"
+study:
+  semantic_color: blue
+  preferred_event_color_id: "9"
+work:
+  semantic_color: orange
+  preferred_event_color_id: "6"
+special_day:
+  semantic_color: red
+  preferred_event_color_id: "11"
+```
+
+Color resolution order:
+
+```text
+explicit user color → category default semantic color → calendar default
+```
+
+User color luôn override category default. Ví dụ “Mai 8h học MSS301, để màu tím” vẫn là category `study` nhưng dùng màu tím nếu provider resolve và apply được.
+
+Trước khi áp dụng semantic color: đọc `Google_Calendar.get_colors` khi cần, dùng event palette, resolve tên màu thành palette key và truyền key qua `color_id`. Không truyền mã hex.
+
+Color là presentation metadata, không phải required scheduling field. Nếu resolve hoặc mutation màu thất bại, vẫn tạo/update event bằng màu mặc định khi có thể, báo partial presentation failure và không claim màu đã áp dụng. Màu không thay đổi recurrence behavior.
+
+## 6.3 One-off Daily Scope vs Recurring Scope
+
+Default:
+
+```yaml
+time_scope: one_off
+recurrence_explicit: false
+```
+
+Không suy diễn recurrence từ routine cũ, lịch tuần liên quan, category `training`/`study`, hoặc một weekday duy nhất. Chỉ bật recurring khi user nói rõ pattern lặp hoặc xác nhận recurrence.
 
 ---
 
@@ -644,6 +746,17 @@ Related task/event: [...]
 
 Không copy nguyên một đoạn chat rất dài nếu không cần thiết.
 
+Nếu Calendar provider không có custom category metadata field, note có thể chứa:
+
+```text
+Category: STUDY
+Scope: ONE_OFF
+Color: BLUE
+Color source: CATEGORY_DEFAULT
+```
+
+Không đưa tên màu vào title trừ khi user muốn.
+
 ---
 
 # 14. Create Workflow
@@ -660,7 +773,11 @@ Tạo bảng nội bộ:
 Item | Title | Date | Time | Priority | Status
 ```
 
-## Step 3 — Ask only if needed
+## Step 3 — Classify and resolve color
+
+Tự suy luận `task_category` và `time_scope`; mặc định `time_scope: one_off`. Với Calendar event, resolve semantic color và áp dụng explicit user override nếu có.
+
+## Step 4 — Ask only if needed
 
 Nếu thiếu nhiều trường, gom thành **một câu hỏi**.
 
@@ -668,7 +785,7 @@ Ví dụ:
 
 > “Mình nhận ra 2 việc. Task report còn thiếu deadline giờ và priority; meeting thứ 5 còn thiếu giờ kết thúc. Bạn cho mình 3 thông tin đó nhé.”
 
-## Step 4 — Search duplicates
+## Step 5 — Search duplicates
 
 Trước khi tạo:
 
@@ -692,7 +809,7 @@ project
 due date
 ```
 
-## Step 5 — Duplicate decision
+## Step 6 — Duplicate decision
 
 Nếu có item gần như trùng:
 
@@ -713,13 +830,13 @@ Nếu có nhiều match:
 
 ASK để xác định record.
 
-## Step 6 — Create
+## Step 7 — Create
 
-Gọi đúng provider.
+Nếu cần custom color, resolve event palette key bằng provider capability rồi gọi đúng provider với `color_id` khi resolve thành công. Không để lỗi màu làm thất bại event hợp lệ nếu Calendar default vẫn dùng được.
 
-## Step 7 — Verify
+## Step 8 — Verify
 
-Sau mutation, kiểm tra kết quả trả về.
+Sau mutation, kiểm tra kết quả trả về, gồm màu đã áp dụng khi relevant.
 
 Không nói “đã tạo” nếu plugin trả lỗi.
 
@@ -1353,6 +1470,8 @@ Không tự gán category nếu không đủ context.
 
 Sau thao tác thành công, trả lời ngắn.
 
+Khi Calendar event có màu, báo category/scope và màu đã được áp dụng khi relevant. Nếu màu không áp dụng được nhưng event vẫn tạo thành công, báo partial presentation failure; không nói màu đã áp dụng nếu provider chưa xác nhận.
+
 ## Create example
 
 ```text
@@ -1574,6 +1693,15 @@ Trước mỗi mutation:
 [ ] Có conflict Calendar đáng chú ý?
 [ ] Target update/delete có đủ confidence?
 [ ] Timezone đúng Asia/Ho_Chi_Minh?
+[ ] Task category đã được nhận dạng theo semantics?
+[ ] `target_day` đã resolve thành ngày tuyệt đối cho one-off daily task?
+[ ] Default `time_scope` là `one_off` và recurrence chỉ explicit?
+[ ] Calendar event đã được evaluate color chưa?
+[ ] User-specified color có override category default chưa?
+[ ] Semantic color đã resolve qua event palette chưa?
+[ ] `color_id` có phải palette key thay vì hex không?
+[ ] Có tránh bịa color ID không?
+[ ] Nếu color fail, event mutation vẫn độc lập và report partial presentation failure chưa?
 [ ] Nếu là Calendar event, đã resolve sound-notification preference? [ ] Đã áp dụng reminder 1440/60/30 phút hoặc user override? [ ] Reminder đã được verify nếu provider hỗ trợ? [ ] Không claim sound nếu provider không xác nhận?
 ```
 
